@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"regexp"
 )
+
+var nextLinkMatch = regexp.MustCompile("^<(.*)>; rel=\"next\", .*")
 
 type Search func(ctx context.Context, query string)
 
@@ -36,14 +38,15 @@ func NewGitHubSearch(token string, out chan []*User, errs chan error) Search {
 			users := ParseUsers(body)
 
 			newQuery := response.Header.Get("Link")
-			newQuery = strings.TrimLeft(strings.TrimRight(newQuery, ">; rel=\"next\""), "<")
+			links := nextLinkMatch.FindStringSubmatch(newQuery)
+			newQuery = links[1]
 			newOut := make(chan []*User)
 
 			go NewGitHubSearch(token, newOut, errs)(ctx, newQuery)
 
 			select {
 			case <-ctx.Done():
-				close(newOut)
+				close(out)
 			case err := <-errs:
 				Cancel(ctx, err, errs)
 			case lastUsers := <-newOut:
@@ -51,7 +54,6 @@ func NewGitHubSearch(token string, out chan []*User, errs chan error) Search {
 			}
 
 		} else {
-
 			Cancel(ctx, errors.New(fmt.Sprintf("Status Code was: %s", response.Status)), errs)
 		}
 
