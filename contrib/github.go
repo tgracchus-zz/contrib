@@ -37,7 +37,6 @@ func NewUserQuery(location string, limit int, host string, token string) stream.
 
 		return nil
 	}
-
 }
 
 var tp *httpcache.Transport = httpcache.NewMemoryCacheTransport()
@@ -71,7 +70,6 @@ func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 		} else {
 			return errors.New(fmt.Sprintf("Status Code was: %s", response.Status)), "", 0
 		}
-
 	}
 }
 
@@ -83,7 +81,6 @@ func rateLimit(header http.Header) {
 		sleep := time.Until(waitTime)
 		time.Sleep(sleep)
 	}
-
 }
 
 func UserHandleResponseFactory(s *stream.Stream) HandleResponse {
@@ -94,15 +91,12 @@ func UserHandleResponseFactory(s *stream.Stream) HandleResponse {
 		if err != nil {
 			return err, 0
 		}
-
 		users := parseUsers(body)
 		for _, user := range users {
 			s.Push(user)
 		}
-
 		return nil, len(users)
 	}
-
 }
 
 func parseUsers(body map[string]interface{}) []*stream.Object {
@@ -112,6 +106,5 @@ func parseUsers(body map[string]interface{}) []*stream.Object {
 		object := &stream.Object{user.(map[string]interface{}), "user"}
 		users = append(users, object)
 	}
-
 	return users
 }
