@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gregjones/httpcache"
 	"github.com/tgracchus/contrib/stream"
 	"net/http"
 	"strconv"
@@ -39,6 +40,9 @@ func NewUserQuery(location string, limit int, host string, token string) stream.
 
 }
 
+var tp *httpcache.Transport = httpcache.NewMemoryCacheTransport()
+var client = http.Client{Transport: tp}
+
 func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 	return func(ctx context.Context, token string, query string) (error, string, int) {
 		request, err := http.NewRequest("GET", query, nil)
@@ -48,7 +52,7 @@ func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 
 		request.Header.Add("token", token)
 		request = request.WithContext(ctx)
-		response, cerr := http.DefaultClient.Do(request)
+		response, cerr := client.Do(request)
 		if cerr != nil {
 			return cerr, "", 0
 		}
