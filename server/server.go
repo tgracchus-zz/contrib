@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+//TODO: make limit more accurate, translate top to int
+
 func main() {
 	store := cache.NewInMemoryStore(time.Minute)
 	gitHubToken := flag.String("token", "", "CONTRIB_GITHUB_TOKEN")
