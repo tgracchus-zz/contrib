@@ -7,143 +7,96 @@ import (
 	"fmt"
 	"github.com/tgracchus/contrib/stream"
 	"net/http"
-	"regexp"
 	"strconv"
 	"time"
 )
 
-var nextLinkMatch = regexp.MustCompile("^<(.*)>; rel=\"next\", .*")
+type HttpGetQuery func(ctx context.Context, token string, query string) (err error, nextQueryUrl string, elems int)
 
-const limitValues = "top50|top100|top150"
-
-var limits = regexp.MustCompile("^(" + limitValues + ")$")
-
-type User struct {
-	Id       float64
-	Url      string
-	UserType string
-	Score    float64
-}
-
-func ParseUser(user map[string]interface{}) *User {
-	id := user["id"].(float64)
-	url := user["url"].(string)
-	userType := user["type"].(string)
-	score := user["score"].(float64)
-	return &User{id, url, userType, score}
-}
-
-func NewQuery(location string, limit string) *query {
-	return &query{location: location, top: limit}
-}
-
-func (c query) validate() error {
-	match := limits.MatchString(c.top)
-	if !match {
-		return errors.New(fmt.Sprintf("top value: %s, is not valid, please use one of this values %s", c.top, limitValues))
-	}
-	if c.location == "" {
-		return errors.New("location can not be empty")
-	}
-
-	return nil
-}
-
-type HttpGetQuery func(ctx context.Context, token string, query string) error
-
-type HandleResponse func(ctx context.Context, response *http.Response) error
+type HandleResponse func(ctx context.Context, response *http.Response) (err error, elems int)
 
 type HandleResponseFactory func(stream stream.Stream) HandleResponse
 
-type query struct {
-	location string
-	top      string
-}
-
-func SearchContrib(query *query, host string, token string) ([]*stream.Object, error) {
-	userQuery := NewUserQuery(query, host, token)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	return stream.Subscribe(ctx, stream.NewStream(ctx, userQuery))
-}
-
-func NewUserQuery(query *query, host string, token string) stream.Source {
-	return func(ctx context.Context, s stream.Stream) error {
-		err := query.validate()
-		if err != nil {
-			return err
-		}
-		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s", query.location)
+func NewUserQuery(location string, limit int, host string, token string) stream.Source {
+	return func(ctx context.Context, s *stream.Stream) error {
+		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s&sort=repositories&order=asc&type:user", location)
 		rhf := UserHandleResponseFactory(s)
-		gerr := NewHttpGetFactory(rhf)(ctx, token, queryUrl)
-		if gerr != nil {
-			return gerr
+		httpGf := NewHttpGetFactory(rhf)
+
+		elems := 0
+		var err error
+		var newElems int
+		for elems < limit {
+			err, queryUrl, newElems = httpGf(ctx, token, queryUrl)
+			elems += newElems
+			if err != nil {
+				return err
+			}
 		}
+
 		return nil
 	}
 
 }
 
 func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
-	var GetQuery HttpGetQuery
-	GetQuery = func(ctx context.Context, token string, query string) error {
+	return func(ctx context.Context, token string, query string) (error, string, int) {
 		request, err := http.NewRequest("GET", query, nil)
 		if err != nil {
-			return err
+			return err, "", 0
 		}
 
 		request.Header.Add("token", token)
 		request = request.WithContext(ctx)
 		response, cerr := http.DefaultClient.Do(request)
 		if cerr != nil {
-			return cerr
+			return cerr, "", 0
 		}
+
+		rateLimit(response.Header)
 
 		if response.StatusCode == http.StatusOK {
-			hr(ctx, response)
-		} else {
-			return errors.New(fmt.Sprintf("Status Code was: %s", response.Status))
-		}
-
-		rateLimit := response.Header.Get("X-Ratelimit-Remaining")
-		if rateLimit == "0" {
-			waitUntil := response.Header.Get("X-Ratelimit-Reset")
-			unixTime, err := strconv.ParseInt(waitUntil, 10, 64)
-			if err != nil {
-				return err
+			nextQueryUrl := ""
+			links := nextLinkMatch.FindStringSubmatch(response.Header.Get("Link"))
+			if len(links) == 2 {
+				nextQueryUrl = links[1]
 			}
-			waitTime := time.Unix(unixTime, 0)
-			sleep := time.Until(waitTime)
-			time.Sleep(sleep)
-		}
 
-		newQuery := response.Header.Get("Link")
-		links := nextLinkMatch.FindStringSubmatch(newQuery)
-
-		if len(links) == 2 {
-			nextQuery := links[1]
-			return GetQuery(ctx, token, nextQuery)
+			herr, find := hr(ctx, response)
+			return herr, nextQueryUrl, find
 		} else {
-			return nil
+			return errors.New(fmt.Sprintf("Status Code was: %s", response.Status)), "", 0
 		}
+
 	}
-	return GetQuery
 }
 
-func UserHandleResponseFactory(s stream.Stream) HandleResponse {
-	return func(ctx context.Context, response *http.Response) error {
+func rateLimit(header http.Header) {
+	rateLimit := header.Get("X-Ratelimit-Remaining")
+	if rateLimit == "0" {
+		unixTime, _ := strconv.ParseInt(header.Get("X-Ratelimit-Reset"), 10, 64)
+		waitTime := time.Unix(unixTime, 0)
+		sleep := time.Until(waitTime)
+		time.Sleep(sleep)
+	}
+
+}
+
+func UserHandleResponseFactory(s *stream.Stream) HandleResponse {
+	return func(ctx context.Context, response *http.Response) (err error, elems int) {
 		decoder := json.NewDecoder(response.Body)
 		var body map[string]interface{}
-		err := decoder.Decode(&body)
+		err = decoder.Decode(&body)
 		if err != nil {
-			return err
+			return err, 0
 		}
 
-		for _, user := range parseUsers(body) {
+		users := parseUsers(body)
+		for _, user := range users {
 			s.Push(user)
 		}
 
-		return nil
+		return nil, len(users)
 	}
 
 }

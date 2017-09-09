@@ -15,9 +15,7 @@ func main() {
 	// However, this one will match /user/john/ and also /user/john/send
 	// If no other routers match /user/john, it will redirect to /user/john/
 	router.GET("/topcontrib", func(c *gin.Context) {
-		query := contrib.NewQuery(c.Query("location"), c.Query("top"))
-
-		contributors, err := contrib.SearchContrib(query, "https://api.github.com", *gitHubToken)
+		contributors, err := contrib.TopContrib(c.Query("location"), c.Query("top"), "https://api.github.com", *gitHubToken)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, newErrorResponse(err))
 		} else {
