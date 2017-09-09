@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-//TODO: make limit more accurate, translate top to int
+//TODO: make limit more accurate, translate top to int, trim user
 
 func main() {
 	store := cache.NewInMemoryStore(time.Minute)
