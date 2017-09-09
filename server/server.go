@@ -1,11 +1,10 @@
 package main
 
 import (
-	"net/http"
+	"flag"
 	"github.com/gin-gonic/gin"
 	"github.com/tgracchus/contrib/contrib"
-	"flag"
-	"context"
+	"net/http"
 )
 
 func main() {
@@ -17,11 +16,9 @@ func main() {
 	// If no other routers match /user/john, it will redirect to /user/john/
 	router.GET("/topcontrib", func(c *gin.Context) {
 		query := contrib.NewQuery(c.Query("location"), c.Query("top"))
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
-		contributors, err := contrib.SearchContrib(ctx, query, "https://api.github.com", *gitHubToken)
-		if (err != nil) {
+		contributors, err := contrib.SearchContrib(query, "https://api.github.com", *gitHubToken)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, newErrorResponse(err))
 		} else {
 			c.JSON(http.StatusOK, contributors)

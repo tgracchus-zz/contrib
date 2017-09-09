@@ -2,11 +2,14 @@ package contrib
 
 import (
 	"context"
-	"net/http"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tgracchus/contrib/stream"
+	"net/http"
 	"regexp"
-	"encoding/json"
+	"strconv"
+	"time"
 )
 
 var nextLinkMatch = regexp.MustCompile("^<(.*)>; rel=\"next\", .*")
@@ -22,7 +25,7 @@ type User struct {
 	Score    float64
 }
 
-func ParseUser(user map[string]interface{}) (*User) {
+func ParseUser(user map[string]interface{}) *User {
 	id := user["id"].(float64)
 	url := user["url"].(string)
 	userType := user["type"].(string)
@@ -30,7 +33,7 @@ func ParseUser(user map[string]interface{}) (*User) {
 	return &User{id, url, userType, score}
 }
 
-func NewQuery(location string, limit string) (*query) {
+func NewQuery(location string, limit string) *query {
 	return &query{location: location, top: limit}
 }
 
@@ -46,72 +49,72 @@ func (c query) validate() error {
 	return nil
 }
 
-type HttpGetQuery func(ctx context.Context, token string, query string)
+type HttpGetQuery func(ctx context.Context, token string, query string) error
 
-type Object struct {
-	Data       map[string]interface{}
-	objectType string
-}
+type HandleResponse func(ctx context.Context, response *http.Response) error
 
-type HandleResponse func(ctx context.Context, response *http.Response)
-
-type HandleResponseFactory func(out chan *Object, eh ErrorHandler) HandleResponse
-
-type ErrorHandlerFactory func(errs chan *error) ErrorHandler
-
-type ErrorHandler func(ctx context.Context, err error)
+type HandleResponseFactory func(stream stream.Stream) HandleResponse
 
 type query struct {
 	location string
 	top      string
 }
 
-func SearchContrib(ctx context.Context, query *query, host string, token string) ([]*Object, error) {
-	err := query.validate()
-	if err != nil {
-		return nil, err
-	}
-
-	out := make(chan *Object)
-	errs := make(chan *error)
-	queryUrl := host + fmt.Sprintf("/search/users?q=location:%s", query.location)
-
-	ehf := CancelErrorHandlerFactory(errs)
-	rhf := UserHandleResponseFactory(out, ehf)
-	go NewHttpGetFactory(rhf, ehf)(ctx, token, queryUrl)
-	var objects []*Object
-
-	for {
-		select {
-		case <-ctx.Done():
-			return objects, ctx.Err()
-		case object := <-out:
-			objects = append(objects, object)
-		case err := <-errs:
-			return nil, *err
-		}
-	}
+func SearchContrib(query *query, host string, token string) ([]*stream.Object, error) {
+	userQuery := NewUserQuery(query, host, token)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	return stream.Subscribe(ctx, stream.NewStream(ctx, userQuery))
 }
 
-func NewHttpGetFactory(hr HandleResponse, eh ErrorHandler) HttpGetQuery {
+func NewUserQuery(query *query, host string, token string) stream.Source {
+	return func(ctx context.Context, s stream.Stream) error {
+		err := query.validate()
+		if err != nil {
+			return err
+		}
+		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s", query.location)
+		rhf := UserHandleResponseFactory(s)
+		gerr := NewHttpGetFactory(rhf)(ctx, token, queryUrl)
+		if gerr != nil {
+			return gerr
+		}
+		return nil
+	}
+
+}
+
+func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 	var GetQuery HttpGetQuery
-	GetQuery = func(ctx context.Context, token string, query string) {
+	GetQuery = func(ctx context.Context, token string, query string) error {
 		request, err := http.NewRequest("GET", query, nil)
 		if err != nil {
-			eh(ctx, err)
+			return err
 		}
 
 		request.Header.Add("token", token)
 		request = request.WithContext(ctx)
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			eh(ctx, err)
+		response, cerr := http.DefaultClient.Do(request)
+		if cerr != nil {
+			return cerr
 		}
 
 		if response.StatusCode == http.StatusOK {
 			hr(ctx, response)
 		} else {
-			eh(ctx, errors.New(fmt.Sprintf("Status Code was: %s", response.Status)))
+			return errors.New(fmt.Sprintf("Status Code was: %s", response.Status))
+		}
+
+		rateLimit := response.Header.Get("X-Ratelimit-Remaining")
+		if rateLimit == "0" {
+			waitUntil := response.Header.Get("X-Ratelimit-Reset")
+			unixTime, err := strconv.ParseInt(waitUntil, 10, 64)
+			if err != nil {
+				return err
+			}
+			waitTime := time.Unix(unixTime, 0)
+			sleep := time.Until(waitTime)
+			time.Sleep(sleep)
 		}
 
 		newQuery := response.Header.Get("Link")
@@ -119,46 +122,39 @@ func NewHttpGetFactory(hr HandleResponse, eh ErrorHandler) HttpGetQuery {
 
 		if len(links) == 2 {
 			nextQuery := links[1]
-			GetQuery(ctx, token, nextQuery)
+			return GetQuery(ctx, token, nextQuery)
+		} else {
+			return nil
 		}
-
 	}
-
 	return GetQuery
 }
 
-func UserHandleResponseFactory(out chan *Object, eh ErrorHandler) HandleResponse {
-	return func(ctx context.Context, response *http.Response) {
+func UserHandleResponseFactory(s stream.Stream) HandleResponse {
+	return func(ctx context.Context, response *http.Response) error {
 		decoder := json.NewDecoder(response.Body)
 		var body map[string]interface{}
 		err := decoder.Decode(&body)
-		if (err != nil) {
-			eh(ctx, err)
+		if err != nil {
+			return err
 		}
 
 		for _, user := range parseUsers(body) {
-			out <- user
+			s.Push(user)
 		}
+
+		return nil
 	}
 
 }
 
-func parseUsers(body map[string]interface{}) []*Object {
+func parseUsers(body map[string]interface{}) []*stream.Object {
 	data := body["items"].([]interface{})
-	var users []*Object
+	var users []*stream.Object
 	for _, user := range data {
-		object := &Object{user.(map[string]interface{}), "user"}
-		users = append(users, object);
+		object := &stream.Object{user.(map[string]interface{}), "user"}
+		users = append(users, object)
 	}
 
 	return users
-}
-
-func CancelErrorHandlerFactory(errs chan *error) ErrorHandler {
-	return func(ctx context.Context, err error) {
-		errs <- &err
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(ctx)
-		cancel()
-	}
 }
