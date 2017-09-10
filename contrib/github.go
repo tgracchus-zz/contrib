@@ -20,8 +20,9 @@ type HandleResponseFactory func(stream stream.Stream) HandleResponse
 
 func NewUserQuery(location string, limit int, host string, token string) stream.Source {
 	return func(ctx context.Context, s *stream.Stream) error {
-		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s&sort=repositories&order=asc&type:user", location)
-		rhf := UserHandleResponseFactory(s)
+		perPage := elemsPerPage(limit)
+		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s&sort=repositories&order=asc&type:user&per_page=%d", location, perPage)
+		rhf := UserHandleResponseFactory(s, limit)
 		httpGf := NewHttpGetFactory(rhf)
 
 		elems := 0
@@ -36,6 +37,13 @@ func NewUserQuery(location string, limit int, host string, token string) stream.
 		}
 
 		return nil
+	}
+}
+func elemsPerPage(i int) int {
+	if i >= 100 {
+		return 100
+	} else {
+		return i
 	}
 }
 
@@ -83,7 +91,8 @@ func rateLimit(header http.Header) {
 	}
 }
 
-func UserHandleResponseFactory(s *stream.Stream) HandleResponse {
+func UserHandleResponseFactory(s *stream.Stream, limit int) HandleResponse {
+	total := 0
 	return func(ctx context.Context, response *http.Response) (err error, elems int) {
 		decoder := json.NewDecoder(response.Body)
 		var body map[string]interface{}
@@ -93,7 +102,12 @@ func UserHandleResponseFactory(s *stream.Stream) HandleResponse {
 		}
 		users := parseUsers(body)
 		for _, user := range users {
-			s.Push(user)
+			if total < limit {
+				s.Push(user)
+				total++
+			} else {
+				return nil, len(users)
+			}
 		}
 		return nil, len(users)
 	}

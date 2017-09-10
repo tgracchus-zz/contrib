@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-//TODO: make limit more accurate, translate top to int, trim user
-
 func main() {
 	store := cache.NewInMemoryStore(time.Minute)
 	gitHubToken := flag.String("token", "", "CONTRIB_GITHUB_TOKEN")
@@ -21,7 +19,12 @@ func main() {
 	router.GET("/topcontrib", cache.CachePage(store, time.Hour, func(c *gin.Context) {
 		contributors, err := contrib.TopContrib(c.Query("location"), c.Query("top"), "https://api.github.com", *gitHubToken)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, newErrorResponse(err))
+			if verr, ok := err.(*contrib.ValidationError); ok {
+				c.JSON(http.StatusBadRequest, verr)
+			} else {
+				c.JSON(http.StatusInternalServerError, newErrorResponse(err))
+			}
+
 		} else {
 			c.JSON(http.StatusOK, contributors)
 		}

@@ -2,7 +2,6 @@ package contrib
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/tgracchus/contrib/stream"
 	"regexp"
@@ -26,13 +25,19 @@ func TopContrib(location string, top string, host string, token string) ([]*stre
 	return stream.Subscribe(ctx, stream.NewStream(ctx, userQuery))
 }
 
+type ValidationError struct {
+	msg string // description of error
+}
+
+func (e *ValidationError) Error() string { return e.msg }
+
 func validate(location string, top string) (int, error) {
 	match := limits.MatchString(top)
 	if !match {
-		return 0, errors.New(fmt.Sprintf("top value: %s, is not valid, please use one of this values %s", top, limitValues))
+		return 0, &ValidationError{fmt.Sprintf("top value: %s, is not valid, please use one of this values %s", top, limitValues)}
 	}
 	if location == "" {
-		return 0, errors.New("location can not be empty")
+		return 0, &ValidationError{"location can not be empty"}
 	}
 
 	limit, err := strconv.Atoi(top)
