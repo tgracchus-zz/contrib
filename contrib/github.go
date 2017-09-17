@@ -27,7 +27,7 @@ func TopContrib(location string, top string, host string, token string) ([]*stre
 	userQuery := NewUserQuery(location, limit, host, token)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	return stream.Subscribe(ctx, stream.Map(ctx, stream.NewStream(ctx, userQuery), trimUser))
+	return stream.NewStream(ctx, userQuery).Map(trimUser).Subscribe()
 }
 
 type ValidationError struct {

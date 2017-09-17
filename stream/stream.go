@@ -5,7 +5,7 @@ import "context"
 func NewStream(ctx context.Context, src Source) *Stream {
 	out := make(chan *Object)
 	errs := make(chan error)
-	s := &Stream{out, errs}
+	s := &Stream{out, errs, ctx}
 	go func() {
 		err := src(ctx, s)
 		if err != nil {
@@ -19,11 +19,26 @@ func NewStream(ctx context.Context, src Source) *Stream {
 	return s
 }
 
+type Object struct {
+	Data       map[string]interface{}
+	ObjectType string
+}
+
+type Stream struct {
+	out  chan *Object
+	errs chan error
+	ctx  context.Context
+}
+
+func (src *Stream) Push(object *Object) {
+	src.out <- object
+}
+
 type Source func(ctx context.Context, s *Stream) error
 
-func Map(ctx context.Context, s *Stream, mapF MapFunc) *Stream {
+func (s *Stream) Map(mapF MapFunc) *Stream {
 	out := make(chan *Object)
-	newStream := &Stream{out, s.errs}
+	newStream := &Stream{out, s.errs, s.ctx}
 
 	go func() {
 		defer close(newStream.out)
@@ -31,7 +46,7 @@ func Map(ctx context.Context, s *Stream, mapF MapFunc) *Stream {
 			select {
 			case object, ok := <-s.out:
 				if ok {
-					newObject, err := mapF(ctx, object)
+					newObject, err := mapF(s.ctx, object)
 					if err != nil {
 						s.errs <- err
 						defer close(s.errs)
@@ -40,7 +55,7 @@ func Map(ctx context.Context, s *Stream, mapF MapFunc) *Stream {
 				} else {
 					return
 				}
-			case <-ctx.Done():
+			case <-s.ctx.Done():
 				return
 			}
 		}
@@ -52,7 +67,7 @@ func Map(ctx context.Context, s *Stream, mapF MapFunc) *Stream {
 
 type MapFunc func(ctx context.Context, object *Object) (*Object, error)
 
-func Subscribe(ctx context.Context, s *Stream) ([]*Object, error) {
+func (s *Stream) Subscribe() ([]*Object, error) {
 	var objects []*Object
 	var err error
 
@@ -64,7 +79,7 @@ func Subscribe(ctx context.Context, s *Stream) ([]*Object, error) {
 			} else {
 				return objects, nil
 			}
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			return objects, nil
 		case erre := <-s.errs:
 			return objects, erre
@@ -72,18 +87,4 @@ func Subscribe(ctx context.Context, s *Stream) ([]*Object, error) {
 	}
 
 	return objects, err
-}
-
-type Object struct {
-	Data       map[string]interface{}
-	ObjectType string
-}
-
-type Stream struct {
-	out  chan *Object
-	errs chan error
-}
-
-func (src *Stream) Push(object *Object) {
-	src.out <- object
 }
