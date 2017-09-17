@@ -21,7 +21,7 @@ func NewStream(ctx context.Context, src Source) *Stream {
 
 type Source func(ctx context.Context, s *Stream) error
 
-func Map(ctx context.Context, s Stream, mapF MapFunc) *Stream {
+func Map(ctx context.Context, s *Stream, mapF MapFunc) *Stream {
 	out := make(chan *Object)
 	newStream := &Stream{out, s.errs}
 
@@ -29,13 +29,17 @@ func Map(ctx context.Context, s Stream, mapF MapFunc) *Stream {
 		defer close(newStream.out)
 		for {
 			select {
-			case object := <-s.out:
-				newObject, err := mapF(ctx, object)
-				if err != nil {
-					s.errs <- err
-					defer close(s.errs)
+			case object, ok := <-s.out:
+				if ok {
+					newObject, err := mapF(ctx, object)
+					if err != nil {
+						s.errs <- err
+						defer close(s.errs)
+					}
+					newStream.out <- newObject
+				} else {
+					return
 				}
-				newStream.out <- newObject
 			case <-ctx.Done():
 				return
 			}

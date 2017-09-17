@@ -8,9 +8,49 @@ import (
 	"github.com/gregjones/httpcache"
 	"github.com/tgracchus/contrib/stream"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 )
+
+var nextLinkMatch = regexp.MustCompile("^<(.*)>; rel=\"next\", .*")
+
+const limitValues = "50|100|150"
+
+var limits = regexp.MustCompile("^(" + limitValues + ")$")
+
+func TopContrib(location string, top string, host string, token string) ([]*stream.Object, error) {
+	limit, err := validate(location, top)
+	if err != nil {
+		return nil, err
+	}
+	userQuery := NewUserQuery(location, limit, host, token)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	return stream.Subscribe(ctx, stream.Map(ctx, stream.NewStream(ctx, userQuery), trimUser))
+}
+
+type ValidationError struct {
+	msg string // description of error
+}
+
+func (e *ValidationError) Error() string { return e.msg }
+
+func validate(location string, top string) (int, error) {
+	match := limits.MatchString(top)
+	if !match {
+		return 0, &ValidationError{fmt.Sprintf("top value: %s, is not valid, please use one of this values %s", top, limitValues)}
+	}
+	if location == "" {
+		return 0, &ValidationError{"location can not be empty"}
+	}
+
+	limit, err := strconv.Atoi(top)
+	if err != nil {
+		return 0, err
+	}
+	return limit, nil
+}
 
 type HttpGetQuery func(ctx context.Context, token string, query string) (err error, nextQueryUrl string, elems int)
 
@@ -67,12 +107,7 @@ func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 		rateLimit(response.Header)
 
 		if response.StatusCode == http.StatusOK {
-			nextQueryUrl := ""
-			links := nextLinkMatch.FindStringSubmatch(response.Header.Get("Link"))
-			if len(links) == 2 {
-				nextQueryUrl = links[1]
-			}
-
+			nextQueryUrl := parseNextQueryUrl(response.Header)
 			herr, find := hr(ctx, response)
 			return herr, nextQueryUrl, find
 		} else {
@@ -80,15 +115,25 @@ func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 		}
 	}
 }
+func parseNextQueryUrl(header http.Header) (nextQueryUrl string) {
+	links := nextLinkMatch.FindStringSubmatch(header.Get("Link"))
+	if len(links) == 2 {
+		nextQueryUrl = links[1]
+	}
+	return
+}
 
-func rateLimit(header http.Header) {
+func rateLimit(header http.Header) time.Duration {
 	rateLimit := header.Get("X-Ratelimit-Remaining")
 	if rateLimit == "0" {
 		unixTime, _ := strconv.ParseInt(header.Get("X-Ratelimit-Reset"), 10, 64)
 		waitTime := time.Unix(unixTime, 0)
 		sleep := time.Until(waitTime)
 		time.Sleep(sleep)
+		return sleep
 	}
+
+	return 0
 }
 
 func UserHandleResponseFactory(s *stream.Stream, limit int) HandleResponse {
@@ -121,4 +166,21 @@ func parseUsers(body map[string]interface{}) []*stream.Object {
 		users = append(users, object)
 	}
 	return users
+}
+
+func trimUser(ctx context.Context, object *stream.Object) (*stream.Object, error) {
+	trimmedUser := make(map[string]interface{})
+	if id, ok := object.Data["id"]; ok {
+		trimmedUser["id"] = id
+	}
+	if url, ok := object.Data["url"]; ok {
+		trimmedUser["url"] = url
+	}
+	if typeVal, ok := object.Data["type"]; ok {
+		trimmedUser["type"] = typeVal
+	}
+	if id, ok := object.Data["score"]; ok {
+		trimmedUser["score"] = id
+	}
+	return &stream.Object{trimmedUser, "user"}, nil
 }
