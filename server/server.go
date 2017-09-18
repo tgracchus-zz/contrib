@@ -4,7 +4,7 @@ import (
 	"flag"
 	"github.com/gin-gonic/contrib/cache"
 	"github.com/gin-gonic/gin"
-	"github.com/tgracchus/contrib/contrib"
+	"github.com/tgracchus/contrib/users"
 	"net/http"
 	"time"
 )
@@ -18,9 +18,9 @@ func main() {
 	// If no other routers match /user/john, it will redirect to /user/john/
 	router := gin.Default()
 	router.GET("/topcontrib", cache.CachePage(store, time.Hour, func(c *gin.Context) {
-		contributors, err := contrib.TopContrib(c.Query("location"), c.Query("top"), "https://api.github.com", *gitHubToken)
+		contributors, err := users.TopContrib(c.Query("location"), c.Query("top"), "https://api.github.com", *gitHubToken)
 		if err != nil {
-			if verr, ok := err.(*contrib.ValidationError); ok {
+			if verr, ok := err.(*users.ValidationError); ok {
 				c.JSON(http.StatusBadRequest, verr)
 			} else {
 				c.JSON(http.StatusInternalServerError, newErrorResponse(err))

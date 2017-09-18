@@ -1,4 +1,4 @@
-package contrib
+package users
 
 import (
 	"context"
@@ -24,10 +24,10 @@ func TopContrib(location string, top string, host string, token string) ([]*stre
 	if err != nil {
 		return nil, err
 	}
-	userQuery := NewUserQuery(location, limit, host, token)
+	userSource := NewUserSource(location, limit, host, token)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	return stream.NewStream(ctx, userQuery).Map(trimUser).Subscribe()
+	return stream.NewStream(ctx, userSource).Map(trimUser).Subscribe()
 }
 
 type ValidationError struct {
@@ -58,7 +58,7 @@ type HandleResponse func(ctx context.Context, response *http.Response) (err erro
 
 type HandleResponseFactory func(stream *stream.Stream) HandleResponse
 
-func NewUserQuery(location string, limit int, host string, token string) stream.Source {
+func NewUserSource(location string, limit int, host string, token string) stream.Source {
 	return func(ctx context.Context, s *stream.Stream) error {
 		perPage := elemsPerPage(limit)
 		queryUrl := host + fmt.Sprintf("/search/users?q=location:%s&sort=repositories&order=asc&type:user&per_page=%d", location, perPage)
