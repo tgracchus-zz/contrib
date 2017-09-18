@@ -3,7 +3,6 @@ package contrib
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/gregjones/httpcache"
 	"github.com/tgracchus/contrib/stream"
@@ -11,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+	"errors"
 )
 
 var nextLinkMatch = regexp.MustCompile("^<(.*)>; rel=\"next\", .*")
@@ -104,16 +104,23 @@ func NewHttpGetFactory(hr HandleResponse) HttpGetQuery {
 			return cerr, "", 0
 		}
 
-		rateLimit(response.Header)
-
 		if response.StatusCode == http.StatusOK {
 			nextQueryUrl := parseNextQueryUrl(response.Header)
 			herr, find := hr(ctx, response)
 			return herr, nextQueryUrl, find
+		} else if isRateLimit(response) {
+			waitForRateLimitToExpire(response.Header)
+			return nil, query, 0
 		} else {
 			return errors.New(fmt.Sprintf("Status Code was: %s", response.Status)), "", 0
 		}
 	}
+}
+
+func isRateLimit(response *http.Response) bool {
+	rateLimit := response.Header.Get("X-Ratelimit-Remaining")
+	return rateLimit == "0" && response.StatusCode == http.StatusForbidden
+
 }
 func parseNextQueryUrl(header http.Header) (nextQueryUrl string) {
 	links := nextLinkMatch.FindStringSubmatch(header.Get("Link"))
@@ -123,7 +130,7 @@ func parseNextQueryUrl(header http.Header) (nextQueryUrl string) {
 	return
 }
 
-func rateLimit(header http.Header) time.Duration {
+func waitForRateLimitToExpire(header http.Header) time.Duration {
 	rateLimit := header.Get("X-Ratelimit-Remaining")
 	if rateLimit == "0" {
 		unixTime, _ := strconv.ParseInt(header.Get("X-Ratelimit-Reset"), 10, 64)
