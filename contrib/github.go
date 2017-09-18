@@ -56,7 +56,7 @@ type HttpGetQuery func(ctx context.Context, token string, query string) (err err
 
 type HandleResponse func(ctx context.Context, response *http.Response) (err error, elems int)
 
-type HandleResponseFactory func(stream stream.Stream) HandleResponse
+type HandleResponseFactory func(stream *stream.Stream) HandleResponse
 
 func NewUserQuery(location string, limit int, host string, token string) stream.Source {
 	return func(ctx context.Context, s *stream.Stream) error {

@@ -115,7 +115,7 @@ func Test_TopContrib_github_rate_limit(t *testing.T) {
 		if callNumber == 0 {
 			callNumber++
 			w.Header().Add("x-ratelimit-remaining", "0")
-			w.Header().Add("X-Ratelimit-Reset", strconv.FormatInt(time.Now().Add(time.Second * 1).Unix(), 10))
+			w.Header().Add("X-Ratelimit-Reset", strconv.FormatInt(time.Now().Add(time.Second * 2).Unix(), 10))
 			w.WriteHeader(http.StatusForbidden)
 		} else {
 			w.Write(content50)
